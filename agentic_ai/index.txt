@@ -1,0 +1,175 @@
+import "dotenv/config";
+import axios from "axios";
+import readlineSync from "readline-sync";
+import { GoogleGenAI } from "@google/genai";
+
+if (!process.env.GEMINI_API) {
+    throw new Error("GEMINI_API is missing. Add it in .env before running.");
+}
+
+const history = [];
+const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API });
+
+function sum({ num1, num2 } = {}) {
+    if (typeof num1 !== "number" || typeof num2 !== "number") {
+        throw new Error("sum expects numeric num1 and num2");
+    }
+    return num1 + num2;
+}
+
+function prime({ num } = {}) {
+    if (typeof num !== "number") {
+        throw new Error("prime expects numeric num");
+    }
+    if (num < 2) return false;
+    for (let i = 2; i <= Math.sqrt(num); i += 1) {
+        if (num % i === 0) return false;
+    }
+    return true;
+}
+
+async function crypto({ coin } = {}) {
+    if (!coin || typeof coin !== "string") {
+        throw new Error("crypto expects a coin string, e.g. bitcoin");
+    }
+
+    const { data } = await axios.get(
+        "https://api.coingecko.com/api/v3/coins/markets",
+        {
+            params: {
+                vs_currency: "usd",
+                ids: coin.toLowerCase().trim(),
+            },
+        }
+    );
+
+    if (!Array.isArray(data) || data.length === 0) {
+        return { error: `No market data found for coin: ${coin}` };
+    }
+
+    return {
+        coin: data[0].id,
+        currentPriceUsd: data[0].current_price,
+        symbol: data[0].symbol,
+    };
+}
+
+const sumDeclaration = {
+    name: "sum",
+    description: "Get the sum of 2 numbers",
+    parameters: {
+        type: "OBJECT",
+        properties: {
+            num1: {
+                type: "NUMBER",
+                description: "First number for addition, e.g. 10",
+            },
+            num2: {
+                type: "NUMBER",
+                description: "Second number for addition, e.g. 10",
+            },
+        },
+        required: ["num1", "num2"],
+    },
+};
+
+const primeDeclaration = {
+    name: "prime",
+    description: "Tell whether a given number is prime",
+    parameters: {
+        type: "OBJECT",
+        properties: {
+            num: {
+                type: "NUMBER",
+                description: "Number to check for primality, e.g. 13",
+            },
+        },
+        required: ["num"],
+    },
+};
+
+const cryptoDeclaration = {
+    name: "crypto",
+    description: "Get current market price of a crypto coin",
+    parameters: {
+        type: "OBJECT",
+        properties: {
+            coin: {
+                type: "STRING",
+                description: "A valid crypto coin id, e.g. bitcoin",
+            },
+        },
+        required: ["coin"],
+    },
+};
+
+const availableTools = {
+    sum,
+    prime,
+    crypto,
+};
+
+async function runAgent(userProblem) {
+    history.push({
+        role: "user",
+        parts: [{ text: userProblem }],
+    });
+
+    while (true) {
+        const response = await ai.models.generateContent({
+            model: "gemini-2.5-flash",
+            contents: history,
+            config: {
+                systemInstruction:
+                    "You are an AI agent. You can use 3 tools: sum, prime, and crypto. Use tools when needed. For normal questions, answer directly.",
+            },
+            tools: [
+                {
+                    functionDeclarations: [sumDeclaration, primeDeclaration, cryptoDeclaration],
+                },
+            ],
+        });
+
+        const functionCalls = response.functionCalls ?? [];
+        if (functionCalls.length === 0) {
+            const text = response.text || "No response generated.";
+            history.push({ role: "model", parts: [{ text }] });
+            console.log(text);
+            break;
+        }
+
+        for (const functionCall of functionCalls) {
+            const { name, args } = functionCall;
+            history.push({ role: "model", parts: [{ functionCall }] });
+
+            let result;
+            try {
+                const tool = availableTools[name];
+                if (!tool) {
+                    throw new Error(`Tool not found: ${name}`);
+                }
+                result = await tool(args ?? {});
+            } catch (error) {
+                result = { error: error.message };
+            }
+
+            history.push({
+                role: "user",
+                parts: [{ functionResponse: { name, response: { result } } }],
+            });
+        }
+    }
+}
+
+async function main() {
+    while (true) {
+        const userProblem = readlineSync.question("Ask me anything (type 'exit' to quit): ").trim();
+        if (!userProblem) continue;
+        if (userProblem.toLowerCase() === "exit") break;
+        await runAgent(userProblem);
+    }
+}
+
+main().catch((error) => {
+    console.error("Agent crashed:", error.message);
+});
