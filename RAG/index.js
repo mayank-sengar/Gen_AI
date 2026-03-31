@@ -15,24 +15,30 @@ const pdfLoader= new PDFLoader(PDF_PATH);
 const rawDocs = await pdfLoader.load();
 
 // console.log(JSON.stringify(rawDocs, null, 2));
-// console.log(rawDocs.length)
+console.log("rawdocs", rawDocs.length)
+
 
 
 //chunking 
 const textSplitter = new RecursiveCharacterTextSplitter({
-    chunckSize : 1000,
+    chunkSize : 1000,
     chunkOverlap : 200,
 })
 const chunkedDocs = await textSplitter.splitDocuments(rawDocs)
 // console.log(JSON.stringify(chunkedDocs.slice(0, 2), null, 2));
+console.log("chuncked docs",chunkedDocs.length)
 
 const embeddings = new GoogleGenerativeAIEmbeddings({
     apiKey: process.env.GEMINI_API_KEY,
-    model: 'text-embedding-004',
+    model: 'gemini-embedding-001',
   });
+
+//   const testEmbedding = await embeddings.embedQuery("hello world");
+// console.log("Embedding length:", testEmbedding.length);
 
 const pinecone = new Pinecone();
 const pineconeIndex = pinecone.Index(process.env.PINECONE_INDEX_NAME);
+console.log("Index Name:", process.env.PINECONE_INDEX_NAME);
 
 
 //Embed Chunks and Upload to Pinecone
@@ -40,6 +46,7 @@ await PineconeStore.fromDocuments(chunkedDocs, embeddings, {
     pineconeIndex,
     maxConcurrency: 5,
   });
+
 
 
 }
